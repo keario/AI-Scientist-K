@@ -8,7 +8,7 @@ import openai
 import google.generativeai as genai
 from google.generativeai.types import GenerationConfig
 
-MAX_NUM_TOKENS = 4096
+MAX_NUM_TOKENS = 4096 # UPDATE
 
 AVAILABLE_LLMS = [
     # Anthropic models
@@ -33,6 +33,9 @@ AVAILABLE_LLMS = [
     "o1-mini-2024-09-12",
     "o3-mini",
     "o3-mini-2025-01-31",
+    "gpt-5.5-2026-04-23", # start of new models! (set reasoning level?)
+    "gpt-5.4-2026-03-05",
+    "gpt-5.4-mini-2026-03-17",
     # OpenRouter models
     "llama3.1-405b",
     # Anthropic Claude models via Amazon Bedrock
@@ -73,11 +76,12 @@ def get_batch_responses_from_llm(
         msg_history=None,
         temperature=0.75,
         n_responses=1,
+        reasoning_effort="medium",
 ):
     if msg_history is None:
         msg_history = []
 
-    if 'gpt' in model:
+    if 'gpt-4' in model:
         new_msg_history = msg_history + [{"role": "user", "content": msg}]
         response = client.chat.completions.create(
             model=model,
@@ -90,6 +94,25 @@ def get_batch_responses_from_llm(
             n=n_responses,
             stop=None,
             seed=0,
+        )
+        content = [r.message.content for r in response.choices]
+        new_msg_history = [
+            new_msg_history + [{"role": "assistant", "content": c}] for c in content
+        ]
+    elif 'gpt-5' in model:
+        new_msg_history = msg_history + [{"role": "user", "content": msg}]
+        response = client.chat.completions.create( # may not work, openai suggests using client.responses.create() for new models
+            model=model,
+            messages=[
+                {"role": "system", "content": system_message},
+                *new_msg_history,
+            ],
+            temperature=temperature,
+            max_tokens=MAX_NUM_TOKENS,
+            n=n_responses,
+            stop=None,
+            seed=0,
+            reasoning_effort=reasoning_effort,
         )
         content = [r.message.content for r in response.choices]
         new_msg_history = [
@@ -148,6 +171,7 @@ def get_response_from_llm(
         print_debug=False,
         msg_history=None,
         temperature=0.75,
+        reasoning_effort="medium"
 ):
     if msg_history is None:
         msg_history = []
@@ -183,7 +207,7 @@ def get_response_from_llm(
                 ],
             }
         ]
-    elif 'gpt' in model:
+    elif 'gpt-4' in model:
         new_msg_history = msg_history + [{"role": "user", "content": msg}]
         response = client.chat.completions.create(
             model=model,
@@ -196,6 +220,24 @@ def get_response_from_llm(
             n=1,
             stop=None,
             seed=0,
+        )
+        content = response.choices[0].message.content
+        new_msg_history = new_msg_history + [{"role": "assistant", "content": content}]
+    elif 'gpt-5' in model:
+        new_msg_history = msg_history + [{"role": "user", "content": msg}]
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_message},
+                *new_msg_history,
+            ],
+            temperature=temperature,
+            max_tokens=MAX_NUM_TOKENS,
+            n=1,
+            stop=None,
+            seed=0,
+            reasoning_effort=reasoning_effort,
+
         )
         content = response.choices[0].message.content
         new_msg_history = new_msg_history + [{"role": "assistant", "content": content}]
