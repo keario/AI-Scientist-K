@@ -136,6 +136,7 @@ def perform_review(
     reviewer_system_prompt=reviewer_system_prompt_neg,
     review_instruction_form=neurips_form,
 ):
+    print("Performing review...")
     if num_fs_examples > 0:
         fs_prompt = get_review_fewshot_examples(num_fs_examples)
         base_prompt = review_instruction_form + fs_prompt
@@ -149,6 +150,7 @@ Here is the paper you are asked to review:
 ```"""
 
     if num_reviews_ensemble > 1:
+        print("Generating batch response for review...")
         llm_review, msg_histories = get_batch_responses_from_llm(
             base_prompt,
             model=model,

@@ -5,10 +5,10 @@ import re
 import anthropic
 import backoff
 import openai
-import google.generativeai as genai
-from google.generativeai.types import GenerationConfig
+# import google.generativeai as genai
+# from google.generativeai.types import GenerationConfig
 
-MAX_NUM_TOKENS = 4096 # UPDATE
+MAX_NUM_TOKENS = 1 # UPDATE
 
 AVAILABLE_LLMS = [
     # Anthropic models
@@ -33,8 +33,11 @@ AVAILABLE_LLMS = [
     "o1-mini-2024-09-12",
     "o3-mini",
     "o3-mini-2025-01-31",
-    "gpt-5.5-2026-04-23", # start of new models! (set reasoning level?)
+    "gpt-5.5", # start of new models!
+    "gpt-5.5-2026-04-23",
+    "gpt-5.4", 
     "gpt-5.4-2026-03-05",
+    "gpt-5.4-mini", 
     "gpt-5.4-mini-2026-03-17",
     # OpenRouter models
     "llama3.1-405b",
@@ -66,7 +69,8 @@ AVAILABLE_LLMS = [
 
 
 # Get N responses from a single message, used for ensembling.
-@backoff.on_exception(backoff.expo, (openai.RateLimitError, openai.APITimeoutError))
+@backoff.on_exception(backoff.expo, (openai.OpenAIError,))
+#@backoff.on_exception(backoff.expo, (openai.RateLimitError, openai.APITimeoutError))
 def get_batch_responses_from_llm(
         msg,
         client,
@@ -81,7 +85,7 @@ def get_batch_responses_from_llm(
     if msg_history is None:
         msg_history = []
 
-    if 'gpt-4' in model:
+    if model.startswith("gpt-4"):
         new_msg_history = msg_history + [{"role": "user", "content": msg}]
         response = client.chat.completions.create(
             model=model,
@@ -99,25 +103,26 @@ def get_batch_responses_from_llm(
         new_msg_history = [
             new_msg_history + [{"role": "assistant", "content": c}] for c in content
         ]
-    elif 'gpt-5' in model:
+    elif model.startswith("gpt-5"):
         new_msg_history = msg_history + [{"role": "user", "content": msg}]
-        response = client.chat.completions.create( # may not work, openai suggests using client.responses.create() for new models
-            model=model,
-            messages=[
-                {"role": "system", "content": system_message},
-                *new_msg_history,
-            ],
-            temperature=temperature,
-            max_tokens=MAX_NUM_TOKENS,
-            n=n_responses,
-            stop=None,
-            seed=0,
-            reasoning_effort=reasoning_effort,
-        )
-        content = [r.message.content for r in response.choices]
-        new_msg_history = [
-            new_msg_history + [{"role": "assistant", "content": c}] for c in content
-        ]
+        content = []
+        new_history = []
+
+        for i in range(n_responses):
+            response = client.responses.create(
+                model=model,
+                input=[
+                    {"role": "system", "content": system_message},
+                    *new_msg_history,
+                ],
+                temperature=temperature,
+                max_output_tokens=MAX_NUM_TOKENS,
+                seed=0, # may not be supported
+                #timeout=30,
+                reasoning={"effort": reasoning_effort},)
+            content.append(response.output_text)
+            new_history.append(new_msg_history + [{"role": "assistant", "content": response.output_text}])
+        new_msg_history = new_history
     elif model == "llama-3-1-405b-instruct":
         new_msg_history = msg_history + [{"role": "user", "content": msg}]
         response = client.chat.completions.create(
@@ -161,8 +166,8 @@ def get_batch_responses_from_llm(
 
     return content, new_msg_history
 
-
-@backoff.on_exception(backoff.expo, (openai.RateLimitError, openai.APITimeoutError))
+@backoff.on_exception(backoff.expo, (openai.OpenAIError,))
+#@backoff.on_exception(backoff.expo, (openai.RateLimitError, openai.APITimeoutError))
 def get_response_from_llm(
         msg,
         client,
@@ -225,21 +230,20 @@ def get_response_from_llm(
         new_msg_history = new_msg_history + [{"role": "assistant", "content": content}]
     elif 'gpt-5' in model:
         new_msg_history = msg_history + [{"role": "user", "content": msg}]
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_message},
-                *new_msg_history,
-            ],
-            temperature=temperature,
-            max_tokens=MAX_NUM_TOKENS,
-            n=1,
-            stop=None,
-            seed=0,
-            reasoning_effort=reasoning_effort,
-
-        )
-        content = response.choices[0].message.content
+        
+        response = client.responses.create( # may not work, openai suggests using client.responses.create() for new models
+                model=model,
+                input=[
+                    {"role": "system", "content": system_message},
+                    *new_msg_history,
+                ],
+                temperature=temperature,
+                max_output_tokens=MAX_NUM_TOKENS,
+                seed=0, # may not be supported
+                #timeout=30,
+                reasoning={"effort": reasoning_effort},)
+        
+        content = response.output_text
         new_msg_history = new_msg_history + [{"role": "assistant", "content": content}]
     elif "o1" in model or "o3" in model:
         new_msg_history = msg_history + [{"role": "user", "content": msg}]
