@@ -8,7 +8,7 @@ import openai
 # import google.generativeai as genai
 # from google.generativeai.types import GenerationConfig
 
-MAX_NUM_TOKENS = 1 # UPDATE
+MAX_NUM_TOKENS = 4096 # UPDATE
 
 AVAILABLE_LLMS = [
     # Anthropic models
@@ -67,10 +67,13 @@ AVAILABLE_LLMS = [
     "gemini-2.5-pro-exp-03-25",
 ]
 
+def backoff_hdlr(details):
+    print(
+        f"Retry {details['tries']} after exception, waiting {details['wait']:0.1f}s"
+    )
 
 # Get N responses from a single message, used for ensembling.
-@backoff.on_exception(backoff.expo, (openai.OpenAIError,))
-#@backoff.on_exception(backoff.expo, (openai.RateLimitError, openai.APITimeoutError))
+@backoff.on_exception(backoff.expo, (openai.OpenAIError,),on_backoff=backoff_hdlr)
 def get_batch_responses_from_llm(
         msg,
         client,
@@ -80,7 +83,7 @@ def get_batch_responses_from_llm(
         msg_history=None,
         temperature=0.75,
         n_responses=1,
-        reasoning_effort="medium",
+        reasoning_effort="low",
 ):
     if msg_history is None:
         msg_history = []
@@ -115,11 +118,13 @@ def get_batch_responses_from_llm(
                     {"role": "system", "content": system_message},
                     *new_msg_history,
                 ],
-                temperature=temperature,
                 max_output_tokens=MAX_NUM_TOKENS,
-                seed=0, # may not be supported
                 #timeout=30,
                 reasoning={"effort": reasoning_effort},)
+            if response.status != "completed":
+                raise ValueError(f"LLM response failed with status {response.status}")
+            print("RAW RESPONSE from llm in get_batch_responses_from_llm:")
+            print(response)
             content.append(response.output_text)
             new_history.append(new_msg_history + [{"role": "assistant", "content": response.output_text}])
         new_msg_history = new_history
@@ -166,8 +171,7 @@ def get_batch_responses_from_llm(
 
     return content, new_msg_history
 
-@backoff.on_exception(backoff.expo, (openai.OpenAIError,))
-#@backoff.on_exception(backoff.expo, (openai.RateLimitError, openai.APITimeoutError))
+@backoff.on_exception(backoff.expo, (openai.OpenAIError,),on_backoff=backoff_hdlr)
 def get_response_from_llm(
         msg,
         client,
@@ -178,6 +182,7 @@ def get_response_from_llm(
         temperature=0.75,
         reasoning_effort="medium"
 ):
+    print(f"Getting response from model {model}")
     if msg_history is None:
         msg_history = []
 
@@ -231,18 +236,19 @@ def get_response_from_llm(
     elif 'gpt-5' in model:
         new_msg_history = msg_history + [{"role": "user", "content": msg}]
         
-        response = client.responses.create( # may not work, openai suggests using client.responses.create() for new models
+        response = client.responses.create(
                 model=model,
                 input=[
                     {"role": "system", "content": system_message},
                     *new_msg_history,
                 ],
-                temperature=temperature,
                 max_output_tokens=MAX_NUM_TOKENS,
-                seed=0, # may not be supported
                 #timeout=30,
                 reasoning={"effort": reasoning_effort},)
-        
+        if response.status != "completed":
+            raise ValueError(f"LLM response failed with status {response.status}")
+        print("RAW RESPONSE from llm in get_response_from_llm:")
+        print(response)
         content = response.output_text
         new_msg_history = new_msg_history + [{"role": "assistant", "content": content}]
     elif "o1" in model or "o3" in model:
